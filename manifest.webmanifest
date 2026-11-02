@@ -1,0 +1,16 @@
+{
+  "name": "銭湯・カフェ巡りマップ",
+  "short_name": "銭湯カフェ地図",
+  "description": "訪れた銭湯・カフェを地図に記録する自分専用のアプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f2937",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

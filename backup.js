@@ -35,12 +35,17 @@ async function createBackup(spots, exportedAt) {
 
 // 記録として最低限の形になっているか（種類は app.js の TYPE_LABELS と同じ）
 function isValidSpot(spot) {
+  // 状態がない古い記録は「行った」として扱う
+  const status = spot?.status ?? 'visited';
   return typeof spot?.id === 'string'
+    && ['visited', 'want'].includes(status)
     && ['sento', 'cafe'].includes(spot.type)
     && typeof spot.name === 'string'
     && Number.isFinite(spot.lat)
     && Number.isFinite(spot.lng)
-    && /^\d{4}-\d{2}-\d{2}$/.test(spot.visitedAt)
+    // 行きたい店にはまだ訪問日がない
+    && (status === 'want' ? spot.visitedAt === null : /^\d{4}-\d{2}-\d{2}$/.test(spot.visitedAt))
+    && typeof spot.createdAt === 'string'
     && Array.isArray(spot.photoIds);
 }
 
@@ -70,11 +75,11 @@ async function parseBackup(text) {
     exportedAt: data.exportedAt,
     // 足りない項目があれば空の値で補う
     spots: data.spots.map((spot) => ({
+      status: 'visited',
       rating: null,
       comment: '',
       extra: {},
-      createdAt: spot.visitedAt,
-      updatedAt: spot.visitedAt,
+      updatedAt: spot.createdAt,
       ...spot,
     })),
     photos: await Promise.all(data.photos.map(async (photo) => ({

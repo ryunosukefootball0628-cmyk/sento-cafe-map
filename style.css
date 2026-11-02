@@ -191,10 +191,70 @@ textarea {
   cursor: pointer;
 }
 
+/* 絞り込みボタン（地図では右上に浮かべる） */
+.filter-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  color: #1f2328;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-filter-button {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 12px);
+  right: 12px;
+  z-index: 1000;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.list-filter-button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #c9ced3;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+/* 絞り込み中は色を変えて、赤い点を出す */
+.filter-button.is-active {
+  color: #6d28d9;
+}
+
+.filter-button.is-active::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d93025;
+}
+
+.map-filter-button.is-active::after {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
 /* リスト・設定画面では、地図の上のボタンとメッセージを出さない */
 body:not([data-view="map"]) #status,
 body:not([data-view="map"]) .record-button,
-body:not([data-view="map"]) .locate-button {
+body:not([data-view="map"]) .locate-button,
+body:not([data-view="map"]) .map-filter-button {
+  display: none;
+}
+
+/* シートを開いている間は、地図の絞り込みボタンを隠す */
+body.has-sheet .map-filter-button {
   display: none;
 }
 
@@ -202,6 +262,7 @@ body:not([data-view="map"]) .locate-button {
 
 body.is-moving .record-button,
 body.is-moving .locate-button,
+body.is-moving .map-filter-button,
 body.is-moving .tab-bar {
   display: none;
 }
@@ -249,10 +310,31 @@ body.is-moving .tab-bar {
   background: #f5f6f7;
 }
 
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(env(safe-area-inset-top) + 16px) 16px 8px;
+}
+
 .page-title {
   margin: 0;
-  padding: calc(env(safe-area-inset-top) + 16px) 16px 8px;
   font-size: 20px;
+}
+
+/* 「行った」「行きたい」の見出し */
+.list-section-title {
+  margin: 8px 16px 6px;
+  color: #5f6670;
+  font-size: 14px;
+}
+
+.list-hint {
+  margin: 16px;
+  color: #5f6670;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .list-empty {
@@ -530,8 +612,19 @@ body.is-moving .tab-bar {
   color: #5f6670;
 }
 
-.detail-move {
+.detail-wide-button {
   width: 100%;
+  margin-bottom: 8px;
+}
+
+.detail-badges {
+  display: flex;
+  gap: 6px;
+}
+
+/* 行きたい店の印 */
+.status-badge {
+  color: #6d28d9;
 }
 
 /* ---- 記録シート（下から引き出す。地図が少し見えたまま入力できる） ---- */
@@ -591,21 +684,21 @@ body.is-moving .tab-bar {
   border: none;
 }
 
-/* 銭湯／カフェの切り替え */
-.type-toggle {
+/* 銭湯／カフェの切り替えなど、いくつかから1つを選ぶボタン */
+.segmented {
   display: flex;
   padding: 4px;
   border-radius: 12px;
   background: #eef0f2;
 }
 
-.type-toggle input {
+.segmented input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.type-toggle label {
+.segmented label {
   flex: 1;
   padding: 10px 0;
   border-radius: 9px;
@@ -615,9 +708,10 @@ body.is-moving .tab-bar {
   cursor: pointer;
 }
 
-.type-toggle input:checked + label {
+.segmented input:checked + label {
   background: #ffffff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  color: #1f2328;
 }
 
 /* 選んだ種類はピンと同じ色にする */
@@ -629,7 +723,7 @@ body.is-moving .tab-bar {
   color: #b45309;
 }
 
-.type-toggle input:focus-visible + label {
+.segmented input:focus-visible + label {
   outline: 2px solid #1a73e8;
   outline-offset: 2px;
 }
@@ -648,6 +742,8 @@ body.is-moving .tab-bar {
 
 .field input[type="text"],
 .field input[type="date"],
+.field input[type="number"],
+.field select,
 .field textarea {
   box-sizing: border-box;
   width: 100%;
@@ -790,4 +886,178 @@ body.is-moving .tab-bar {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ---- 種類別の追加項目（編集のときだけ出す） ---- */
+
+.extra-fields {
+  margin: 4px 0 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e3e5e8;
+}
+
+.field-group-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.extra-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 8px;
+}
+
+.extra-grid .field {
+  min-width: 0;
+}
+
+.extra-wide {
+  grid-column: 1 / -1;
+}
+
+/* ---- 絞り込み ---- */
+
+.filter-group {
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+}
+
+.filter-group legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: #5f6670;
+  font-size: 14px;
+}
+
+.filter-group .segmented label {
+  font-size: 14px;
+}
+
+.filter-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid #c9ced3;
+  border-radius: 999px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.filter-checks label:has(input:checked) {
+  border-color: #1f2937;
+  background: #f1f3f5;
+  font-weight: 600;
+}
+
+.filter-checks input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #1f2937;
+}
+
+.filter-count {
+  margin: 4px 0 12px;
+  color: #5f6670;
+  font-size: 14px;
+  text-align: center;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.filter-actions .button {
+  flex: 1;
+}
+
+/* ---- 統計 ---- */
+
+.stats-title {
+  margin: 16px 0 4px;
+  font-size: 15px;
+}
+
+.stats-legend {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 8px;
+  color: #5f6670;
+  font-size: 13px;
+}
+
+.legend::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.legend--sento::before {
+  background: #0e7490;
+}
+
+.legend--cafe::before {
+  background: #b45309;
+}
+
+.monthly-stats {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.monthly-stats li {
+  display: grid;
+  grid-template-columns: 7.5em 1fr 2em;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.month-label {
+  color: #5f6670;
+}
+
+/* 月ごとの棒。銭湯とカフェを色分けして積み上げる */
+.month-bar {
+  display: flex;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #eef0f2;
+}
+
+.month-bar-sento {
+  background: #0e7490;
+}
+
+.month-bar-cafe {
+  background: #b45309;
+}
+
+.month-total {
+  font-weight: 600;
+  text-align: right;
+}
+
+.settings-steps {
+  margin: 12px 0 0;
+  padding-left: 1.2em;
+  font-size: 14px;
+  line-height: 1.7;
 }

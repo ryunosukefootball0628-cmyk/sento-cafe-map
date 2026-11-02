@@ -14,6 +14,8 @@ const TYPE_ICONS = { sento: '♨️', cafe: '☕' };
 const MAX_PHOTOS = 3;
 // 最後のバックアップからこの日数がたったら知らせる
 const BACKUP_REMIND_DAYS = 30;
+// 統計で、月ごとの訪問数を出す月数
+const STATS_MONTHS = 12;
 
 const map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
 
@@ -161,7 +163,12 @@ document.getElementById('locate-button').addEventListener('click', () => {
 
 // ---- 記録データ ----
 
-let spots = loadSpots();
+// 状態（status）がない古い記録は「行った」として扱う
+function normalizeSpot(spot) {
+  return { status: 'visited', extra: {}, ...spot };
+}
+
+let spots = loadSpots().map(normalizeSpot);
 
 function findSpot(id) {
   return spots.find((spot) => spot.id === id);
@@ -177,6 +184,7 @@ function commitSpots(nextSpots) {
     return false;
   }
   spots = nextSpots;
+  renderMarkers();
   renderList();
   renderSettings();
   return true;
@@ -186,17 +194,38 @@ function saveUpdatedSpot(updated) {
   return commitSpots(spots.map((spot) => (spot.id === updated.id ? updated : spot)));
 }
 
+// ---- 絞り込み（地図とリストの両方に効く） ----
+
+const filter = { status: 'all', type: 'all', minRating: 0, sauna: false, outlet: false, wifi: false };
+
+function isFiltering() {
+  return filter.status !== 'all' || filter.type !== 'all' || filter.minRating > 0
+    || filter.sauna || filter.outlet || filter.wifi;
+}
+
+function matchesFilter(spot) {
+  return (filter.status === 'all' || spot.status === filter.status)
+    && (filter.type === 'all' || spot.type === filter.type)
+    && (spot.rating ?? 0) >= filter.minRating
+    && (!filter.sauna || spot.extra.sauna === true)
+    && (!filter.outlet || spot.extra.outlet === true)
+    && (!filter.wifi || spot.extra.wifi === true);
+}
+
 // ---- 記録のピン ----
 
 const markers = new Map(); // 記録のID → ピン
 
-function spotIcon(type) {
+// 行きたい店は白抜きのピンにして、行った店と見分けられるようにする
+function spotIcon(type, status) {
+  const color = TYPE_COLORS[type];
+  const want = status === 'want';
   return L.divIcon({
     className: 'spot-pin',
     html: `<svg width="28" height="40" viewBox="0 0 28 40" aria-hidden="true">
       <path d="M14 1.5C7.1 1.5 1.5 7.1 1.5 14c0 9.5 12.5 24.5 12.5 24.5S26.5 23.5 26.5 14c0-6.9-5.6-12.5-12.5-12.5Z"
-        fill="${TYPE_COLORS[type]}" stroke="#ffffff" stroke-width="2"/>
-      <circle cx="14" cy="14" r="5" fill="#ffffff"/>
+        fill="${want ? '#ffffff' : color}" stroke="${want ? color : '#ffffff'}" stroke-width="${want ? 2.5 : 2}"/>
+      <circle cx="14" cy="14" r="5" fill="${want ? color : '#ffffff'}"/>
     </svg>`,
     iconSize: [28, 40],
     iconAnchor: [14, 39],
@@ -205,7 +234,7 @@ function spotIcon(type) {
 }
 
 function addSpotMarker(spot) {
-  const marker = L.marker([spot.lat, spot.lng], { icon: spotIcon(spot.type), title: spot.name })
+  const marker = L.marker([spot.lat, spot.lng], { icon: spotIcon(spot.type, spot.status), title: spot.name })
     .addTo(map)
     .on('click', () => {
       // 位置を直している間は詳細画面を開かない
@@ -216,15 +245,11 @@ function addSpotMarker(spot) {
   markers.set(spot.id, marker);
 }
 
-function removeSpotMarker(id) {
-  markers.get(id).remove();
-  markers.delete(id);
-}
-
+// 絞り込みに合う記録だけ、ピンを立て直す
 function renderMarkers() {
   markers.forEach((marker) => marker.remove());
   markers.clear();
-  spots.forEach(addSpotMarker);
+  spots.filter(matchesFilter).forEach(addSpotMarker);
 }
 
 // ---- 画面の切り替え（地図・リスト・設定） ----
@@ -250,6 +275,12 @@ tabs.forEach((tab) => {
   tab.addEventListener('click', () => showView(tab.dataset.view));
 });
 
+// シートを開いている間は、地図の上のボタンを隠す（style.css の body.has-sheet）
+function updateSheetState() {
+  const open = document.querySelector('.sheet.is-open') !== null;
+  document.body.classList.toggle('has-sheet', open);
+}
+
 // ---- リスト画面 ----
 
 const listTitle = document.getElementById('list-title');
@@ -263,13 +294,41 @@ function renderList() {
   listPhotoUrls = [];
   listRenderCount += 1;
 
-  // 訪問日の新しい順。同じ日なら、あとに記録したものを上にする
-  const sorted = [...spots].sort((a, b) =>
-    b.visitedAt.localeCompare(a.visitedAt) || b.createdAt.localeCompare(a.createdAt));
+  const shown = spots.filter(matchesFilter);
+  // 行った店は訪問日の新しい順（同じ日なら、あとに記録したものを上）、行きたい店は追加した新しい順
+  const visited = shown
+    .filter((spot) => spot.status === 'visited')
+    .sort((a, b) => b.visitedAt.localeCompare(a.visitedAt) || b.createdAt.localeCompare(a.createdAt));
+  const want = shown
+    .filter((spot) => spot.status === 'want')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  listTitle.textContent = `記録一覧（${spots.length}件）`;
-  listEmpty.hidden = spots.length > 0;
-  spotList.replaceChildren(...sorted.map(createListItem));
+  listTitle.textContent = isFiltering()
+    ? `記録一覧（${shown.length}件 / 全${spots.length}件）`
+    : `記録一覧（${spots.length}件）`;
+  listEmpty.hidden = shown.length > 0;
+  listEmpty.textContent = spots.length === 0
+    ? 'まだ記録がありません。地図の「＋ ここを記録」から記録できます。'
+    : '絞り込みに合う記録がありません。';
+  spotList.replaceChildren(
+    ...[['行った', visited], ['行きたい', want]]
+      .filter(([, items]) => items.length > 0)
+      .map(([title, items]) => createListSection(`${title}（${items.length}件）`, items)),
+  );
+}
+
+function createListSection(title, items) {
+  const heading = document.createElement('h3');
+  heading.className = 'list-section-title';
+  heading.textContent = title;
+
+  const list = document.createElement('ul');
+  list.className = 'spot-list';
+  list.append(...items.map(createListItem));
+
+  const section = document.createElement('section');
+  section.append(heading, list);
+  return section;
 }
 
 function createListThumb(spot) {
@@ -306,9 +365,12 @@ function createListItem(spot) {
   type.className = `type-${spot.type}`;
   type.textContent = TYPE_LABELS[spot.type];
 
+  const when = spot.status === 'want'
+    ? `${formatDisplayDate(spot.createdAt.slice(0, 10))}に追加`
+    : formatDisplayDate(spot.visitedAt);
   const meta = document.createElement('span');
   meta.className = 'spot-row-meta';
-  meta.append(type, `・${formatDisplayDate(spot.visitedAt)}`);
+  meta.append(type, `・${when}`);
 
   const main = document.createElement('span');
   main.className = 'spot-row-main';
@@ -334,10 +396,15 @@ function createListItem(spot) {
 const detailView = document.getElementById('detail-view');
 const detailPhotos = document.getElementById('detail-photos');
 const detailType = document.getElementById('detail-type');
+const detailStatus = document.getElementById('detail-status');
 const detailName = document.getElementById('detail-name');
+const detailDateLabel = document.getElementById('detail-date-label');
 const detailDate = document.getElementById('detail-date');
+const detailRatingRow = document.getElementById('detail-rating-row');
 const detailRating = document.getElementById('detail-rating');
+const detailExtra = document.getElementById('detail-extra');
 const detailComment = document.getElementById('detail-comment');
+const detailVisitButton = document.getElementById('detail-visit');
 
 let detailId = null; // 詳細画面で表示中の記録のID
 let detailPhotoUrls = [];
@@ -378,16 +445,51 @@ async function renderDetailPhotos(spot) {
   }));
 }
 
+// 種類別の追加項目のうち、入力されているものを [見出し, 値] で返す
+function extraEntries(spot) {
+  const { extra } = spot;
+  const yesNo = (value) => (value ? 'あり' : 'なし');
+  const entries = [];
+  if (spot.type === 'sento') {
+    if (typeof extra.sauna === 'boolean') entries.push(['サウナ', yesNo(extra.sauna)]);
+    if (Number.isFinite(extra.coldBathTemp)) entries.push(['水風呂', `${extra.coldBathTemp}℃`]);
+    if (Number.isFinite(extra.price)) entries.push(['入浴料', `${extra.price.toLocaleString()}円`]);
+  } else {
+    if (typeof extra.outlet === 'boolean') entries.push(['電源', yesNo(extra.outlet)]);
+    if (typeof extra.wifi === 'boolean') entries.push(['Wi-Fi', yesNo(extra.wifi)]);
+    if (extra.ordered) entries.push(['頼んだもの', extra.ordered]);
+  }
+  return entries;
+}
+
 function renderDetail(spot) {
+  const want = spot.status === 'want';
   detailType.className = `type-badge type-${spot.type}`;
   detailType.textContent = TYPE_LABELS[spot.type];
+  detailStatus.hidden = !want;
   // 店名や感想は textContent で入れる（HTMLとして解釈させない）
   detailName.textContent = spot.name;
-  detailDate.textContent = formatDisplayDate(spot.visitedAt);
+  detailDateLabel.textContent = want ? '追加日' : '訪問日';
+  detailDate.textContent = formatDisplayDate(want ? spot.createdAt.slice(0, 10) : spot.visitedAt);
+  detailRatingRow.hidden = want;
   detailRating.className = spot.rating ? 'stars' : 'muted';
   detailRating.textContent = spot.rating ? formatStars(spot.rating) : '未評価';
+
+  const entries = extraEntries(spot);
+  detailExtra.hidden = entries.length === 0;
+  detailExtra.replaceChildren(...entries.map(([label, value]) => {
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const description = document.createElement('dd');
+    description.textContent = value;
+    const row = document.createElement('div');
+    row.append(term, description);
+    return row;
+  }));
+
   detailComment.classList.toggle('is-empty', spot.comment === '');
-  detailComment.textContent = spot.comment || '感想はまだありません';
+  detailComment.textContent = spot.comment || (want ? 'メモはまだありません' : '感想はまだありません');
+  detailVisitButton.hidden = !want;
   renderDetailPhotos(spot);
 }
 
@@ -416,48 +518,65 @@ function deleteSpot(id) {
   // 記録に紐づく写真も消す
   deletePhotos(spot.photoIds).catch((error) => console.error(error));
 
-  removeSpotMarker(id);
   closeDetail();
   showToast(`「${spot.name}」を削除しました`);
+}
+
+// 行きたい店に行ったら「行った」に切り替え、評価や写真を書けるように編集を開く
+function markVisited(id) {
+  const spot = findSpot(id);
+  const now = new Date();
+  const visited = {
+    ...spot,
+    status: 'visited',
+    visitedAt: formatLocalDate(now),
+    updatedAt: formatLocalDateTime(now),
+  };
+  if (!saveUpdatedSpot(visited)) {
+    return;
+  }
+  renderDetail(visited);
+  openSheet(visited);
 }
 
 document.getElementById('detail-back').addEventListener('click', closeDetail);
 document.getElementById('detail-edit').addEventListener('click', () => openSheet(findSpot(detailId)));
 document.getElementById('detail-delete').addEventListener('click', () => deleteSpot(detailId));
 document.getElementById('detail-move').addEventListener('click', () => startMove(detailId));
+detailVisitButton.addEventListener('click', () => markVisited(detailId));
 
 // ---- ピンの位置を直す ----
 // 地図を動かすつもりで誤ってピンを動かさないよう、詳細画面から始めたときだけドラッグできる
 
 const moveBar = document.getElementById('move-bar');
 let movingId = null; // 位置を直している記録のID
-let moveFrom = null; // キャンセルしたときに戻す位置
 
 function startMove(id) {
+  // 絞り込みでピンが出ていないときは、一時的に立てる
+  if (!markers.has(id)) {
+    addSpotMarker(findSpot(id));
+  }
   const marker = markers.get(id);
   movingId = id;
-  moveFrom = marker.getLatLng();
 
   closeDetail();
   showView('map');
-  map.setView(moveFrom, Math.max(map.getZoom(), CURRENT_ZOOM));
+  map.setView(marker.getLatLng(), Math.max(map.getZoom(), CURRENT_ZOOM));
   marker.dragging.enable();
   document.body.classList.add('is-moving');
   moveBar.hidden = false;
 }
 
+// 終わったら、保存されている位置でピンを立て直す（キャンセルならもとの位置に戻る）
 function endMove() {
-  markers.get(movingId).dragging.disable();
+  markers.get(movingId)?.dragging.disable();
   movingId = null;
-  moveFrom = null;
   document.body.classList.remove('is-moving');
   moveBar.hidden = true;
+  renderMarkers();
 }
 
-document.getElementById('move-cancel').addEventListener('click', () => {
-  markers.get(movingId).setLatLng(moveFrom);
-  endMove();
-});
+document.getElementById('move-cancel').addEventListener('click', endMove);
 
 document.getElementById('move-done').addEventListener('click', () => {
   const { lat, lng } = markers.get(movingId).getLatLng();
@@ -469,7 +588,7 @@ document.getElementById('move-done').addEventListener('click', () => {
   showToast(`「${spot.name}」の位置を直しました`);
 });
 
-// ---- 記録シート（新規記録と編集で共用） ----
+// ---- 記録シート（新規記録・行きたい店の追加・編集で共用） ----
 
 const recordButton = document.getElementById('record-button');
 const sheet = document.getElementById('record-sheet');
@@ -477,17 +596,31 @@ const sheetTitle = document.getElementById('sheet-title');
 const nameInput = document.getElementById('name-input');
 const visitedField = document.getElementById('visited-field');
 const visitedInput = document.getElementById('visited-input');
-const commentInput = document.getElementById('comment-input');
+const ratingField = document.getElementById('rating-field');
 const ratingButtons = sheet.querySelectorAll('.rating button');
+const commentLabel = document.getElementById('comment-label');
+const commentInput = document.getElementById('comment-input');
 const photoThumbs = document.getElementById('photo-thumbs');
 const cameraButton = document.getElementById('camera-button');
 const albumButton = document.getElementById('album-button');
 const cameraInput = document.getElementById('camera-input');
 const albumInput = document.getElementById('album-input');
+const extraFields = document.getElementById('extra-fields');
+const extraGroups = {
+  sento: document.getElementById('extra-sento'),
+  cafe: document.getElementById('extra-cafe'),
+};
+const extraSauna = document.getElementById('extra-sauna');
+const extraColdBath = document.getElementById('extra-cold-bath');
+const extraPrice = document.getElementById('extra-price');
+const extraOutlet = document.getElementById('extra-outlet');
+const extraWifi = document.getElementById('extra-wifi');
+const extraOrdered = document.getElementById('extra-ordered');
 const saveButton = document.getElementById('save-button');
 
-let editingId = null; // 編集中の記録のID（新規記録のときは null）
-let draftLatLng = null; // 新規記録の位置（「＋ ここを記録」を押した時点で決める）
+let editingId = null; // 編集中の記録のID（新規のときは null）
+let draftStatus = 'visited'; // 新規のときの状態（行った / 行きたい）
+let draftLatLng = null; // 新規の位置（「＋ ここを記録」を押した時点か、長押しした場所）
 let draftUsesMapCenter = false;
 let draftRating = null;
 let draftPhotos = []; // シートに付けている写真 { id, blob, url, isNew }
@@ -495,6 +628,7 @@ let removedPhotoIds = []; // 編集で外した、保存済みの写真のID
 let pendingPhotos = 0; // 読み込み中・縮小中の写真の枚数（この間は保存できない）
 let sheetSession = 0; // シートを開くたびに増やす（閉じたあとに届いた写真を捨てるため）
 let saving = false;
+let draftMarker = null; // 行きたい店を追加するときに、長押しした場所に出す仮のピン
 
 function setRating(value) {
   draftRating = value;
@@ -507,6 +641,63 @@ function setRating(value) {
 
 function setType(type) {
   sheet.querySelector(`input[name="type"][value="${type}"]`).checked = true;
+}
+
+function currentType() {
+  return sheet.querySelector('input[name="type"]:checked').value;
+}
+
+// 種類は前回選んだものを初期値にする
+function lastTypeOrDefault() {
+  const lastType = loadLastType();
+  return Object.keys(TYPE_LABELS).includes(lastType) ? lastType : 'sento';
+}
+
+// 選んでいる種類の追加項目だけを出す（隠した欄は入力チェックの対象から外す）
+function updateExtraVisibility() {
+  const type = currentType();
+  Object.entries(extraGroups).forEach(([groupType, group]) => {
+    const hidden = extraFields.hidden || groupType !== type;
+    group.hidden = hidden;
+    group.querySelectorAll('input, select').forEach((control) => {
+      control.disabled = hidden;
+    });
+  });
+}
+
+function fillExtra(extra) {
+  const choice = (value) => {
+    if (value === true) return 'yes';
+    if (value === false) return 'no';
+    return '';
+  };
+  extraSauna.value = choice(extra.sauna);
+  extraColdBath.value = extra.coldBathTemp ?? '';
+  extraPrice.value = extra.price ?? '';
+  extraOutlet.value = choice(extra.outlet);
+  extraWifi.value = choice(extra.wifi);
+  extraOrdered.value = extra.ordered ?? '';
+}
+
+// 入力されていない項目は null（頼んだものは空文字）にする
+function readExtra(type) {
+  const yesNo = (select) => (select.value === '' ? null : select.value === 'yes');
+  const number = (input) => (input.value === '' ? null : Number(input.value));
+  if (type === 'sento') {
+    return { sauna: yesNo(extraSauna), coldBathTemp: number(extraColdBath), price: number(extraPrice) };
+  }
+  return { outlet: yesNo(extraOutlet), wifi: yesNo(extraWifi), ordered: extraOrdered.value.trim() };
+}
+
+function showDraftMarker(latlng) {
+  removeDraftMarker();
+  draftMarker = L.marker(latlng, { icon: spotIcon(currentType(), 'want'), interactive: false, keyboard: false })
+    .addTo(map);
+}
+
+function removeDraftMarker() {
+  draftMarker?.remove();
+  draftMarker = null;
 }
 
 function createDraftThumb(photo) {
@@ -615,39 +806,59 @@ async function loadDraftPhotos(photoIds) {
   renderDraftPhotos();
 }
 
-// spot を渡すと編集、渡さないと新規記録としてシートを開く
-function openSheet(spot = null) {
+// spot を渡すと編集、渡さないと新規。新規で status: 'want' なら、latlng の場所を行きたいリストに追加する
+function openSheet(spot = null, { status = 'visited', latlng = null } = {}) {
   // 起動時のお知らせなどがシートの入力欄に重ならないよう消しておく
   hideToast();
   sheet.reset();
   sheetSession += 1;
   clearDraftPhotos();
+  removeDraftMarker();
   saving = false;
   editingId = spot ? spot.id : null;
-  sheetTitle.textContent = spot ? '記録を編集' : '記録する';
-  // 訪問日は編集のときだけ変えられる（新規記録は保存した日付が自動で入る）
-  visitedField.hidden = !spot;
+  draftStatus = spot ? spot.status : status;
+  const want = draftStatus === 'want';
+
+  if (spot) {
+    sheetTitle.textContent = '記録を編集';
+  } else {
+    sheetTitle.textContent = want ? '行きたい店を追加' : '記録する';
+  }
+  commentLabel.textContent = want ? 'メモ' : 'ひとこと感想';
+  // 訪問日と追加項目は編集のときだけ、評価は行った店のときだけ出す
+  visitedField.hidden = !spot || want;
+  ratingField.hidden = want;
+  extraFields.hidden = !spot;
 
   if (spot) {
     setType(spot.type);
     nameInput.value = spot.name;
-    visitedInput.value = spot.visitedAt;
+    visitedInput.value = spot.visitedAt ?? '';
     setRating(spot.rating);
     commentInput.value = spot.comment;
+    fillExtra(spot.extra);
   } else {
-    // 押した時点の最新の現在地を使う。取れていなければ地図の中心で記録し、あとでピンを動かして直す
-    draftUsesMapCenter = lastPosition === null;
-    if (draftUsesMapCenter) {
-      const center = map.getCenter();
-      draftLatLng = [center.lat, center.lng];
-    } else {
-      draftLatLng = lastPosition;
-    }
-    // 種類は前回選んだものを初期値にする
-    const lastType = loadLastType();
-    setType(Object.keys(TYPE_LABELS).includes(lastType) ? lastType : 'sento');
+    setType(lastTypeOrDefault());
     setRating(null);
+    if (want) {
+      draftLatLng = latlng;
+      draftUsesMapCenter = false;
+      showDraftMarker(latlng);
+      // シートに隠れないよう、長押しした場所が画面の上のほうに来るように地図を動かす
+      const point = map.latLngToContainerPoint(latlng);
+      map.panBy([0, point.y - map.getSize().y * 0.2]);
+    } else {
+      // 押した時点の最新の現在地を使う。取れていなければ地図の中心で記録し、あとでピンを動かして直す
+      draftUsesMapCenter = lastPosition === null;
+      if (draftUsesMapCenter) {
+        const center = map.getCenter();
+        draftLatLng = [center.lat, center.lng];
+      } else {
+        draftLatLng = lastPosition;
+      }
+    }
   }
+  updateExtraVisibility();
 
   renderDraftPhotos();
   if (spot) {
@@ -655,7 +866,8 @@ function openSheet(spot = null) {
   }
 
   sheet.classList.add('is-open');
-  // 新規記録のときは、すぐに店名を打てるようにする
+  updateSheetState();
+  // 新規のときは、すぐに店名を打てるようにする
   if (!spot) {
     nameInput.focus({ preventScroll: true });
   }
@@ -663,8 +875,10 @@ function openSheet(spot = null) {
 
 function closeSheet() {
   sheet.classList.remove('is-open');
+  updateSheetState();
   sheetSession += 1; // 縮小中・読み込み中の写真は捨てる
   clearDraftPhotos();
+  removeDraftMarker();
   // 入力中ならキーボードを閉じる
   if (sheet.contains(document.activeElement)) {
     document.activeElement.blur();
@@ -673,6 +887,21 @@ function closeSheet() {
 
 recordButton.addEventListener('click', () => openSheet());
 document.getElementById('sheet-close').addEventListener('click', closeSheet);
+
+// 地図を長押し（PCでは右クリック）すると、その場所を行きたいリストに追加できる
+map.on('contextmenu', (event) => {
+  if (movingId !== null || document.body.classList.contains('has-sheet')) {
+    return;
+  }
+  openSheet(null, { status: 'want', latlng: [event.latlng.lat, event.latlng.lng] });
+});
+
+sheet.querySelectorAll('input[name="type"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    updateExtraVisibility();
+    draftMarker?.setIcon(spotIcon(currentType(), 'want'));
+  });
+});
 
 ratingButtons.forEach((button) => {
   button.addEventListener('click', () => {
@@ -717,12 +946,15 @@ sheet.addEventListener('submit', async (event) => {
   }
 
   // 保存している間にシートが閉じられても困らないよう、入力内容をここで取り出しておく
+  const type = currentType();
   const draft = {
-    type: sheet.querySelector('input[name="type"]:checked').value,
+    status: draftStatus,
+    type,
     name,
     comment: commentInput.value.trim(),
     rating: draftRating,
     visitedAt: visitedInput.value,
+    extra: editingId === null ? {} : readExtra(type),
     photos: [...draftPhotos],
     removedPhotoIds: [...removedPhotoIds],
     latlng: draftLatLng,
@@ -765,14 +997,17 @@ async function createSpot(draft) {
     return;
   }
 
+  const want = draft.status === 'want';
   const spot = {
     id,
+    status: draft.status,
     type: draft.type,
     name: draft.name,
     lat: draft.latlng[0],
     lng: draft.latlng[1],
-    visitedAt: formatLocalDate(now),
-    rating: draft.rating,
+    // 行きたい店はまだ行っていないので、訪問日も評価もない
+    visitedAt: want ? null : formatLocalDate(now),
+    rating: want ? null : draft.rating,
     comment: draft.comment,
     photoIds: draft.photos.map((photo) => photo.id),
     extra: {},
@@ -786,15 +1021,20 @@ async function createSpot(draft) {
   }
   saveLastType(draft.type);
 
-  addSpotMarker(spot);
   closeSheet();
   if (!map.getBounds().contains(draft.latlng)) {
     map.panTo(draft.latlng);
   }
 
-  const message = draft.usesMapCenter
-    ? `現在地が取れないため、地図の中心に「${draft.name}」を記録しました`
-    : `「${draft.name}」を記録しました`;
+  let message = `「${draft.name}」を記録しました`;
+  if (want) {
+    message = `「${draft.name}」を行きたいリストに追加しました`;
+  } else if (draft.usesMapCenter) {
+    message = `現在地が取れないため、地図の中心に「${draft.name}」を記録しました`;
+  }
+  if (!matchesFilter(spot)) {
+    message += '（絞り込み中のため表示されていません）';
+  }
   showToast(message);
 }
 
@@ -805,15 +1045,17 @@ async function updateSpot(id, draft) {
   }
 
   const spot = findSpot(id);
+  const want = spot.status === 'want';
   const updated = {
     ...spot,
     type: draft.type,
     name: draft.name,
     // 訪問日が空にされたときは元の日付のままにする
-    visitedAt: draft.visitedAt || spot.visitedAt,
-    rating: draft.rating,
+    visitedAt: want ? null : (draft.visitedAt || spot.visitedAt),
+    rating: want ? null : draft.rating,
     comment: draft.comment,
     photoIds: draft.photos.map((photo) => photo.id),
+    extra: draft.extra,
     updatedAt: formatLocalDateTime(new Date()),
   };
   if (!saveUpdatedSpot(updated)) {
@@ -823,9 +1065,6 @@ async function updateSpot(id, draft) {
   // 外した写真は、記録を保存できてから消す
   deletePhotos(draft.removedPhotoIds).catch((error) => console.error(error));
 
-  // 種類や店名が変わったときのために、ピンを作り直す
-  removeSpotMarker(id);
-  addSpotMarker(updated);
   if (detailId === id) {
     renderDetail(updated);
   }
@@ -833,10 +1072,64 @@ async function updateSpot(id, draft) {
   showToast('保存しました');
 }
 
-// ---- 設定画面とバックアップ ----
+// ---- 絞り込みの画面 ----
+
+const filterSheet = document.getElementById('filter-sheet');
+const filterCount = document.getElementById('filter-count');
+const filterButtons = document.querySelectorAll('.filter-button');
+
+function updateFilterIndicators() {
+  const active = isFiltering();
+  filterButtons.forEach((button) => button.classList.toggle('is-active', active));
+  filterCount.textContent = `${spots.filter(matchesFilter).length}件 / 全${spots.length}件を表示しています`;
+}
+
+// フォームの選択を読み取って、地図とリストに反映する
+function applyFilterForm() {
+  const data = new FormData(filterSheet);
+  filter.status = data.get('status');
+  filter.type = data.get('type');
+  filter.minRating = Number(data.get('rating'));
+  filter.sauna = data.has('sauna');
+  filter.outlet = data.has('outlet');
+  filter.wifi = data.has('wifi');
+  renderMarkers();
+  renderList();
+  updateFilterIndicators();
+}
+
+function openFilter() {
+  if (sheet.classList.contains('is-open')) {
+    return;
+  }
+  updateFilterIndicators();
+  filterSheet.classList.add('is-open');
+  updateSheetState();
+}
+
+function closeFilter() {
+  filterSheet.classList.remove('is-open');
+  updateSheetState();
+}
+
+filterButtons.forEach((button) => button.addEventListener('click', openFilter));
+filterSheet.addEventListener('change', applyFilterForm);
+document.getElementById('filter-close').addEventListener('click', closeFilter);
+document.getElementById('filter-done').addEventListener('click', closeFilter);
+document.getElementById('filter-reset').addEventListener('click', () => {
+  filterSheet.reset();
+  applyFilterForm();
+});
+filterSheet.addEventListener('submit', (event) => event.preventDefault());
+
+// ---- 設定画面（統計・バックアップ） ----
 
 const settingsTab = document.querySelector('.tab[data-view="settings"]');
-const spotCountEl = document.getElementById('spot-count');
+const statVisited = document.getElementById('stat-visited');
+const statWant = document.getElementById('stat-want');
+const statPhotos = document.getElementById('stat-photos');
+const monthlyStats = document.getElementById('monthly-stats');
+const monthlyEmpty = document.getElementById('monthly-empty');
 const lastBackupEl = document.getElementById('last-backup');
 const backupWarning = document.getElementById('backup-warning');
 const exportButton = document.getElementById('export-button');
@@ -844,6 +1137,73 @@ const importInput = document.getElementById('import-input');
 const importDialog = document.getElementById('import-dialog');
 const importSummary = document.getElementById('import-summary');
 let pendingBackup = null; // 読み込んだあと、追加か上書きかを選んでもらっているバックアップ
+
+function countByType(list, type) {
+  return list.filter((spot) => spot.type === type).length;
+}
+
+function createMonthRow({ key, sento, cafe }, max) {
+  const [year, month] = key.split('-').map(Number);
+  const label = document.createElement('span');
+  label.className = 'month-label';
+  label.textContent = `${year}年${month}月`;
+
+  const bar = document.createElement('span');
+  bar.className = 'month-bar';
+  [['sento', sento], ['cafe', cafe]].forEach(([type, count]) => {
+    if (count > 0) {
+      const segment = document.createElement('span');
+      segment.className = `month-bar-${type}`;
+      segment.style.width = `${(count / max) * 100}%`;
+      bar.append(segment);
+    }
+  });
+
+  const total = document.createElement('span');
+  total.className = 'month-total';
+  total.textContent = String(sento + cafe);
+
+  // 棒の内訳は読み上げ用に文字でも入れておく
+  const breakdown = document.createElement('span');
+  breakdown.className = 'visually-hidden';
+  breakdown.textContent = `銭湯${sento}件、カフェ${cafe}件`;
+
+  const item = document.createElement('li');
+  item.append(label, bar, total, breakdown);
+  return item;
+}
+
+function renderStats() {
+  const visited = spots.filter((spot) => spot.status === 'visited');
+  const want = spots.filter((spot) => spot.status === 'want');
+  const photoCount = spots.reduce((sum, spot) => sum + spot.photoIds.length, 0);
+  statVisited.textContent = `${visited.length}件（銭湯 ${countByType(visited, 'sento')}・カフェ ${countByType(visited, 'cafe')}）`;
+  statWant.textContent = `${want.length}件`;
+  statPhotos.textContent = `${photoCount}枚`;
+
+  monthlyEmpty.hidden = visited.length > 0;
+  if (visited.length === 0) {
+    monthlyStats.replaceChildren();
+    return;
+  }
+
+  // 今月から最大12か月さかのぼる（最初に訪問した月より前は出さない）
+  const firstMonth = visited.map((spot) => spot.visitedAt.slice(0, 7)).sort()[0];
+  const cursor = new Date();
+  cursor.setDate(1);
+  const months = [];
+  for (let i = 0; i < STATS_MONTHS; i += 1) {
+    const key = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}`;
+    if (key < firstMonth) {
+      break;
+    }
+    const inMonth = visited.filter((spot) => spot.visitedAt.startsWith(key));
+    months.push({ key, sento: countByType(inMonth, 'sento'), cafe: countByType(inMonth, 'cafe') });
+    cursor.setMonth(cursor.getMonth() - 1);
+  }
+  const max = Math.max(1, ...months.map((month) => month.sento + month.cafe));
+  monthlyStats.replaceChildren(...months.map((month) => createMonthRow(month, max)));
+}
 
 // 最後のバックアップ（一度もなければ、いちばん古い記録）から日数がたっているか
 function isBackupOverdue() {
@@ -856,8 +1216,7 @@ function isBackupOverdue() {
 }
 
 function renderSettings() {
-  const photoCount = spots.reduce((sum, spot) => sum + spot.photoIds.length, 0);
-  spotCountEl.textContent = `${spots.length}件（写真 ${photoCount}枚）`;
+  renderStats();
   const lastBackupAt = loadLastBackupAt();
   lastBackupEl.textContent = lastBackupAt ? formatDisplayDate(lastBackupAt.slice(0, 10)) : 'まだありません';
 
@@ -915,7 +1274,6 @@ async function importBackup(mode, backup) {
     const unused = previous.flatMap((spot) => spot.photoIds).filter((id) => !kept.has(id));
     deletePhotos(unused).catch((error) => console.error(error));
   }
-  renderMarkers();
 
   const skipped = backup.spots.length - incoming.length;
   if (mode === 'replace') {
@@ -961,6 +1319,22 @@ document.getElementById('import-form').addEventListener('submit', (event) => {
   }
 });
 
+// ---- ホーム画面に追加したとき（PWA） ----
+
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+// ホーム画面から開いているときは、追加のしかたの案内を出さない
+document.getElementById('install-section').hidden = isStandalone;
+
+// 電波の弱い場所でも開けるよう、画面のファイルを Service Worker でキャッシュする
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch((error) => console.error(error));
+}
+
+// ホーム画面から開いたときは、保存したデータを消さないようブラウザに頼む
+if (isStandalone && navigator.storage?.persist) {
+  navigator.storage.persist().catch((error) => console.error(error));
+}
+
 // Esc キーで、いちばん上に開いている画面を閉じる（PCで使うとき用）
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') {
@@ -968,6 +1342,8 @@ document.addEventListener('keydown', (event) => {
   }
   if (sheet.classList.contains('is-open')) {
     closeSheet();
+  } else if (filterSheet.classList.contains('is-open')) {
+    closeFilter();
   } else if (!detailView.hidden) {
     closeDetail();
   }
@@ -978,6 +1354,7 @@ document.addEventListener('keydown', (event) => {
 renderMarkers();
 renderList();
 renderSettings();
+updateFilterIndicators();
 if (isBackupOverdue()) {
   showToast(`最後のバックアップから${BACKUP_REMIND_DAYS}日以上たっています。設定から書き出してください`, 6000);
 }

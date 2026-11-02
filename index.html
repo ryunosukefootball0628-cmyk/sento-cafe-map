@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>銭湯・カフェ巡りマップ</title>
+  <!-- ホーム画面に追加したときの名前とアイコン（PWA） -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1f2937">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="銭湯カフェ地図">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="style.css">
@@ -13,6 +19,11 @@
   <div id="map"></div>
   <p id="status" class="message" role="status" hidden></p>
   <p id="toast" class="message" role="status" hidden></p>
+  <button id="map-filter-button" class="filter-button map-filter-button" type="button" aria-label="絞り込み">
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 5h18l-7 8v6l-4 2v-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+  </button>
   <button id="locate-button" class="locate-button" type="button" aria-label="現在地に戻る">
     <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="3.5" fill="currentColor"/>
@@ -33,23 +44,49 @@
 
   <!-- リスト画面 -->
   <section id="list-view" class="page-view" aria-labelledby="list-title" hidden>
-    <h2 id="list-title" class="page-title">記録一覧</h2>
-    <p id="list-empty" class="list-empty" hidden>まだ記録がありません。地図の「＋ ここを記録」から記録できます。</p>
-    <ul id="spot-list" class="spot-list"></ul>
+    <div class="page-header">
+      <h2 id="list-title" class="page-title">記録一覧</h2>
+      <button id="list-filter-button" class="filter-button list-filter-button" type="button">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 5h18l-7 8v6l-4 2v-8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        絞り込み
+      </button>
+    </div>
+    <p id="list-empty" class="list-empty" hidden></p>
+    <div id="spot-list"></div>
+    <p class="list-hint">行きたい店は、地図を長押しすると追加できます（PCでは右クリック）。</p>
   </section>
 
   <!-- 設定画面 -->
   <section id="settings-view" class="page-view" aria-labelledby="settings-title" hidden>
-    <h2 id="settings-title" class="page-title">設定</h2>
+    <div class="page-header">
+      <h2 id="settings-title" class="page-title">設定</h2>
+    </div>
 
     <div class="settings-section">
-      <h3>記録</h3>
+      <h3>統計</h3>
       <dl class="settings-list">
         <div>
-          <dt>記録件数</dt>
-          <dd id="spot-count"></dd>
+          <dt>行った</dt>
+          <dd id="stat-visited"></dd>
+        </div>
+        <div>
+          <dt>行きたい</dt>
+          <dd id="stat-want"></dd>
+        </div>
+        <div>
+          <dt>写真</dt>
+          <dd id="stat-photos"></dd>
         </div>
       </dl>
+      <h4 class="stats-title">月ごとの訪問数</h4>
+      <p class="stats-legend">
+        <span class="legend legend--sento">銭湯</span>
+        <span class="legend legend--cafe">カフェ</span>
+      </p>
+      <ol id="monthly-stats" class="monthly-stats"></ol>
+      <p id="monthly-empty" class="settings-note" hidden>まだ訪問の記録がありません。</p>
     </div>
 
     <div class="settings-section">
@@ -68,6 +105,17 @@
         <button id="import-button" class="button" type="button">バックアップを読み込む</button>
       </div>
       <input id="import-input" class="visually-hidden" type="file" accept="application/json,.json" tabindex="-1">
+    </div>
+
+    <!-- ホーム画面から開いているときは出さない -->
+    <div id="install-section" class="settings-section">
+      <h3>ホーム画面に追加</h3>
+      <p class="settings-note">ホーム画面に追加すると、アプリのように全画面で開けます。電波の弱い場所でも画面は開けます（地図は表示できないことがあります）。</p>
+      <ul class="settings-steps">
+        <li>iPhone：Safari の共有ボタン →「ホーム画面に追加」</li>
+        <li>Android：Chrome のメニュー →「ホーム画面に追加」または「アプリをインストール」</li>
+      </ul>
+      <p class="settings-warning">iPhone では、ホーム画面から開いたアプリと Safari とでデータが別々になります。Safari で記録したデータは、先にバックアップを書き出し、ホーム画面のアプリで読み込んでください。</p>
     </div>
   </section>
 
@@ -90,24 +138,30 @@
     <div class="detail-body">
       <!-- 写真は横にスワイプして見る -->
       <div id="detail-photos" class="detail-photos" hidden></div>
-      <p id="detail-type" class="type-badge"></p>
+      <div class="detail-badges">
+        <p id="detail-type" class="type-badge"></p>
+        <p id="detail-status" class="type-badge status-badge" hidden>行きたい</p>
+      </div>
       <h2 id="detail-name" class="detail-name"></h2>
       <dl class="detail-meta">
         <div>
-          <dt>訪問日</dt>
+          <dt id="detail-date-label">訪問日</dt>
           <dd id="detail-date"></dd>
         </div>
-        <div>
+        <div id="detail-rating-row">
           <dt>評価</dt>
           <dd id="detail-rating"></dd>
         </div>
       </dl>
+      <!-- 種類別の追加項目（入力されているものだけ出す） -->
+      <dl id="detail-extra" class="detail-meta" hidden></dl>
       <p id="detail-comment" class="detail-comment"></p>
-      <button id="detail-move" class="button detail-move" type="button">地図でピンの位置を直す</button>
+      <button id="detail-visit" class="button button--primary detail-wide-button" type="button" hidden>行った！（記録に切り替える）</button>
+      <button id="detail-move" class="button detail-wide-button" type="button">地図でピンの位置を直す</button>
     </div>
   </section>
 
-  <!-- 記録シート（新規記録と編集で共用） -->
+  <!-- 記録シート（新規記録・行きたい店の追加・編集で共用） -->
   <form id="record-sheet" class="sheet" autocomplete="off">
     <div class="sheet-header">
       <h2 id="sheet-title" class="sheet-title">記録する</h2>
@@ -116,7 +170,7 @@
 
     <fieldset class="type-field">
       <legend class="visually-hidden">種類</legend>
-      <div class="type-toggle">
+      <div class="segmented">
         <input id="type-sento" type="radio" name="type" value="sento">
         <label for="type-sento">銭湯</label>
         <input id="type-cafe" type="radio" name="type" value="cafe">
@@ -135,7 +189,8 @@
       <input id="visited-input" type="date">
     </label>
 
-    <div class="field">
+    <!-- 行きたい店にはまだ評価がないので出さない -->
+    <div id="rating-field" class="field">
       <span id="rating-label" class="field-label">評価</span>
       <div class="rating" role="group" aria-labelledby="rating-label">
         <button type="button" data-value="1" aria-label="星1つ">★</button>
@@ -159,11 +214,117 @@
     </div>
 
     <label class="field">
-      <span class="field-label">ひとこと感想</span>
+      <span id="comment-label" class="field-label">ひとこと感想</span>
       <textarea id="comment-input" rows="2"></textarea>
     </label>
 
+    <!-- 種類別の追加項目は、帰宅後に「編集」から書き足す -->
+    <div id="extra-fields" class="extra-fields" hidden>
+      <h3 class="field-group-title">詳しい情報</h3>
+      <div id="extra-sento" class="extra-grid">
+        <label class="field">
+          <span class="field-label">サウナ</span>
+          <select id="extra-sauna">
+            <option value="">—</option>
+            <option value="yes">あり</option>
+            <option value="no">なし</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">水風呂（℃）</span>
+          <input id="extra-cold-bath" type="number" inputmode="decimal" min="0" max="40" step="0.1">
+        </label>
+        <label class="field">
+          <span class="field-label">入浴料（円）</span>
+          <input id="extra-price" type="number" inputmode="numeric" min="0" step="1">
+        </label>
+      </div>
+      <div id="extra-cafe" class="extra-grid">
+        <label class="field">
+          <span class="field-label">電源</span>
+          <select id="extra-outlet">
+            <option value="">—</option>
+            <option value="yes">あり</option>
+            <option value="no">なし</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Wi-Fi</span>
+          <select id="extra-wifi">
+            <option value="">—</option>
+            <option value="yes">あり</option>
+            <option value="no">なし</option>
+          </select>
+        </label>
+        <label class="field extra-wide">
+          <span class="field-label">頼んだもの</span>
+          <input id="extra-ordered" type="text">
+        </label>
+      </div>
+    </div>
+
     <button id="save-button" class="save-button" type="submit">保存</button>
+  </form>
+
+  <!-- 絞り込み（地図とリストの両方に効く） -->
+  <form id="filter-sheet" class="sheet" autocomplete="off">
+    <div class="sheet-header">
+      <h2 class="sheet-title">絞り込み</h2>
+      <button id="filter-close" class="sheet-close" type="button" aria-label="閉じる">×</button>
+    </div>
+
+    <fieldset class="filter-group">
+      <legend>状態</legend>
+      <div class="segmented">
+        <input id="filter-status-all" type="radio" name="status" value="all" checked>
+        <label for="filter-status-all">すべて</label>
+        <input id="filter-status-visited" type="radio" name="status" value="visited">
+        <label for="filter-status-visited">行った</label>
+        <input id="filter-status-want" type="radio" name="status" value="want">
+        <label for="filter-status-want">行きたい</label>
+      </div>
+    </fieldset>
+
+    <fieldset class="filter-group">
+      <legend>種類</legend>
+      <div class="segmented">
+        <input id="filter-type-all" type="radio" name="type" value="all" checked>
+        <label for="filter-type-all">すべて</label>
+        <input id="filter-type-sento" type="radio" name="type" value="sento">
+        <label for="filter-type-sento">銭湯</label>
+        <input id="filter-type-cafe" type="radio" name="type" value="cafe">
+        <label for="filter-type-cafe">カフェ</label>
+      </div>
+    </fieldset>
+
+    <fieldset class="filter-group">
+      <legend>評価</legend>
+      <div class="segmented">
+        <input id="filter-rating-0" type="radio" name="rating" value="0" checked>
+        <label for="filter-rating-0">指定なし</label>
+        <input id="filter-rating-3" type="radio" name="rating" value="3">
+        <label for="filter-rating-3">★3以上</label>
+        <input id="filter-rating-4" type="radio" name="rating" value="4">
+        <label for="filter-rating-4">★4以上</label>
+        <input id="filter-rating-5" type="radio" name="rating" value="5">
+        <label for="filter-rating-5">★5</label>
+      </div>
+    </fieldset>
+
+    <fieldset class="filter-group">
+      <legend>こだわり</legend>
+      <div class="filter-checks">
+        <label><input type="checkbox" name="sauna">サウナあり</label>
+        <label><input type="checkbox" name="outlet">電源あり</label>
+        <label><input type="checkbox" name="wifi">Wi-Fiあり</label>
+      </div>
+    </fieldset>
+
+    <p id="filter-count" class="filter-count"></p>
+    <div class="filter-actions">
+      <button id="filter-reset" class="button" type="button">リセット</button>
+      <button id="filter-done" class="button button--primary" type="button">閉じる</button>
+    </div>
   </form>
 
   <!-- バックアップを読み込むときの確認 -->
