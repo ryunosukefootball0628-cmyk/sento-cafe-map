@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>銭湯・カフェ巡りマップ</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-view="map">
+  <!-- 地図画面 -->
+  <div id="map"></div>
+  <p id="status" class="message" role="status" hidden></p>
+  <p id="toast" class="message" role="status" hidden></p>
+  <button id="locate-button" class="locate-button" type="button" aria-label="現在地に戻る">
+    <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="3.5" fill="currentColor"/>
+      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  </button>
+  <button id="record-button" class="record-button" type="button">＋ ここを記録</button>
+
+  <!-- ピンの位置を直している間だけ出す操作バー -->
+  <div id="move-bar" class="move-bar" hidden>
+    <p class="move-hint">ピンをドラッグして、正しい位置に合わせてください</p>
+    <div class="move-actions">
+      <button id="move-cancel" class="button" type="button">キャンセル</button>
+      <button id="move-done" class="button button--primary" type="button">完了</button>
+    </div>
+  </div>
+
+  <!-- リスト画面 -->
+  <section id="list-view" class="page-view" aria-labelledby="list-title" hidden>
+    <h2 id="list-title" class="page-title">記録一覧</h2>
+    <p id="list-empty" class="list-empty" hidden>まだ記録がありません。地図の「＋ ここを記録」から記録できます。</p>
+    <ul id="spot-list" class="spot-list"></ul>
+  </section>
+
+  <!-- 設定画面 -->
+  <section id="settings-view" class="page-view" aria-labelledby="settings-title" hidden>
+    <h2 id="settings-title" class="page-title">設定</h2>
+
+    <div class="settings-section">
+      <h3>記録</h3>
+      <dl class="settings-list">
+        <div>
+          <dt>記録件数</dt>
+          <dd id="spot-count"></dd>
+        </div>
+      </dl>
+    </div>
+
+    <div class="settings-section">
+      <h3>バックアップ</h3>
+      <dl class="settings-list">
+        <div>
+          <dt>最後のバックアップ</dt>
+          <dd id="last-backup"></dd>
+        </div>
+      </dl>
+      <!-- 日数は app.js の BACKUP_REMIND_DAYS と同じ -->
+      <p id="backup-warning" class="settings-warning" hidden>最後のバックアップから30日以上たっています。書き出しておきましょう。</p>
+      <p class="settings-note">記録と写真は、この端末のブラウザの中だけに保存されています。ブラウザのデータを消したり機種変更したりすると消えてしまうので、月に1回はバックアップを書き出して、ファイルを保管してください。</p>
+      <div class="settings-actions">
+        <button id="export-button" class="button button--primary" type="button">バックアップを書き出す</button>
+        <button id="import-button" class="button" type="button">バックアップを読み込む</button>
+      </div>
+      <input id="import-input" class="visually-hidden" type="file" accept="application/json,.json" tabindex="-1">
+    </div>
+  </section>
+
+  <!-- 画面下のタブ -->
+  <nav class="tab-bar" aria-label="画面の切り替え">
+    <button class="tab" type="button" data-view="map" aria-current="page">地図</button>
+    <button class="tab" type="button" data-view="list">リスト</button>
+    <button class="tab" type="button" data-view="settings">設定</button>
+  </nav>
+
+  <!-- 詳細画面 -->
+  <section id="detail-view" class="detail-view" aria-labelledby="detail-name" hidden>
+    <header class="detail-header">
+      <button id="detail-back" class="text-button" type="button">‹ 戻る</button>
+      <div>
+        <button id="detail-edit" class="text-button" type="button">編集</button>
+        <button id="detail-delete" class="text-button text-button--danger" type="button">削除</button>
+      </div>
+    </header>
+    <div class="detail-body">
+      <!-- 写真は横にスワイプして見る -->
+      <div id="detail-photos" class="detail-photos" hidden></div>
+      <p id="detail-type" class="type-badge"></p>
+      <h2 id="detail-name" class="detail-name"></h2>
+      <dl class="detail-meta">
+        <div>
+          <dt>訪問日</dt>
+          <dd id="detail-date"></dd>
+        </div>
+        <div>
+          <dt>評価</dt>
+          <dd id="detail-rating"></dd>
+        </div>
+      </dl>
+      <p id="detail-comment" class="detail-comment"></p>
+      <button id="detail-move" class="button detail-move" type="button">地図でピンの位置を直す</button>
+    </div>
+  </section>
+
+  <!-- 記録シート（新規記録と編集で共用） -->
+  <form id="record-sheet" class="sheet" autocomplete="off">
+    <div class="sheet-header">
+      <h2 id="sheet-title" class="sheet-title">記録する</h2>
+      <button id="sheet-close" class="sheet-close" type="button" aria-label="閉じる">×</button>
+    </div>
+
+    <fieldset class="type-field">
+      <legend class="visually-hidden">種類</legend>
+      <div class="type-toggle">
+        <input id="type-sento" type="radio" name="type" value="sento">
+        <label for="type-sento">銭湯</label>
+        <input id="type-cafe" type="radio" name="type" value="cafe">
+        <label for="type-cafe">カフェ</label>
+      </div>
+    </fieldset>
+
+    <label class="field">
+      <span class="field-label">店名（必須）</span>
+      <input id="name-input" type="text" required enterkeyhint="done">
+    </label>
+
+    <!-- 訪問日は編集のときだけ出す（新規記録は保存した日付が自動で入る） -->
+    <label id="visited-field" class="field" hidden>
+      <span class="field-label">訪問日</span>
+      <input id="visited-input" type="date">
+    </label>
+
+    <div class="field">
+      <span id="rating-label" class="field-label">評価</span>
+      <div class="rating" role="group" aria-labelledby="rating-label">
+        <button type="button" data-value="1" aria-label="星1つ">★</button>
+        <button type="button" data-value="2" aria-label="星2つ">★</button>
+        <button type="button" data-value="3" aria-label="星3つ">★</button>
+        <button type="button" data-value="4" aria-label="星4つ">★</button>
+        <button type="button" data-value="5" aria-label="星5つ">★</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <span id="photo-label" class="field-label">写真（3枚まで）</span>
+      <ul id="photo-thumbs" class="photo-thumbs" aria-labelledby="photo-label"></ul>
+      <div class="photo-buttons">
+        <button id="camera-button" class="button" type="button">撮影</button>
+        <button id="album-button" class="button" type="button">アルバムから選ぶ</button>
+      </div>
+      <!-- 撮影用は capture 付き（カメラが直接起動する）、アルバム用は capture なし -->
+      <input id="camera-input" class="visually-hidden" type="file" accept="image/*" capture="environment" tabindex="-1">
+      <input id="album-input" class="visually-hidden" type="file" accept="image/*" multiple tabindex="-1">
+    </div>
+
+    <label class="field">
+      <span class="field-label">ひとこと感想</span>
+      <textarea id="comment-input" rows="2"></textarea>
+    </label>
+
+    <button id="save-button" class="save-button" type="submit">保存</button>
+  </form>
+
+  <!-- バックアップを読み込むときの確認 -->
+  <dialog id="import-dialog" class="dialog" aria-labelledby="import-title">
+    <form id="import-form" method="dialog">
+      <h3 id="import-title">バックアップを読み込む</h3>
+      <p id="import-summary"></p>
+      <p class="dialog-note">「追加」は今の記録を残したまま、まだない記録だけを加えます。「上書き」は今の記録をすべて消して、バックアップの内容に置き換えます。</p>
+      <div class="dialog-actions">
+        <button class="button" value="cancel">キャンセル</button>
+        <button class="button" value="add">追加</button>
+        <button class="button button--danger" value="replace">上書き</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="storage.js"></script>
+  <script src="image.js"></script>
+  <script src="backup.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
