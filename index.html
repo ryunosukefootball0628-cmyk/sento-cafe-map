@@ -89,6 +89,17 @@
       <p id="monthly-empty" class="settings-note" hidden>まだ訪問の記録がありません。</p>
     </div>
 
+    <!-- 同期の仕組み（sync.js）が読み込めたときだけ出す -->
+    <div id="sync-section" class="settings-section" hidden>
+      <h3>端末どうしの同期</h3>
+      <p id="sync-status" class="settings-status"></p>
+      <p class="settings-note">Googleでログインすると、記録と写真がクラウドに保存され、同じアカウントでログインしたスマホやPCと同じ内容になります。電波がないときの記録は、つながったときに送られます。</p>
+      <div class="settings-actions">
+        <button id="sign-in-button" class="button button--primary" type="button">Googleでログイン</button>
+        <button id="sign-out-button" class="button" type="button" hidden>ログアウト</button>
+      </div>
+    </div>
+
     <div class="settings-section">
       <h3>バックアップ</h3>
       <dl class="settings-list">
@@ -99,7 +110,7 @@
       </dl>
       <!-- 日数は app.js の BACKUP_REMIND_DAYS と同じ -->
       <p id="backup-warning" class="settings-warning" hidden>最後のバックアップから30日以上たっています。書き出しておきましょう。</p>
-      <p class="settings-note">記録と写真は、この端末のブラウザの中だけに保存されています。ブラウザのデータを消したり機種変更したりすると消えてしまうので、月に1回はバックアップを書き出して、ファイルを保管してください。</p>
+      <p class="settings-note">ログインしていないとき、記録と写真はこの端末のブラウザの中だけに保存されています。ブラウザのデータを消したり機種変更したりすると消えてしまうので、同期を使わない場合は月に1回バックアップを書き出して、ファイルを保管してください。</p>
       <div class="settings-actions">
         <button id="export-button" class="button button--primary" type="button">バックアップを書き出す</button>
         <button id="import-button" class="button" type="button">バックアップを読み込む</button>
@@ -115,7 +126,7 @@
         <li>iPhone：Safari の共有ボタン →「ホーム画面に追加」</li>
         <li>Android：Chrome のメニュー →「ホーム画面に追加」または「アプリをインストール」</li>
       </ul>
-      <p class="settings-warning">iPhone では、ホーム画面から開いたアプリと Safari とでデータが別々になります。Safari で記録したデータは、先にバックアップを書き出し、ホーム画面のアプリで読み込んでください。</p>
+      <p class="settings-warning">iPhone では、ホーム画面から開いたアプリと Safari とでデータが別々になります。ホーム画面のアプリでも同じGoogleアカウントでログインすると、Safari で記録したデータが同期されます。</p>
     </div>
   </section>
 
@@ -347,5 +358,7 @@
   <script src="image.js"></script>
   <script src="backup.js"></script>
   <script src="app.js"></script>
+  <!-- 端末どうしの同期（読み込めなくても、この端末だけで使える） -->
+  <script type="module" src="sync.js"></script>
 </body>
 </html>

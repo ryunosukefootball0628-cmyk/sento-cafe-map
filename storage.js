@@ -4,6 +4,8 @@ const SPOTS_KEY = 'spots';
 const LAST_TYPE_KEY = 'lastType';
 // 最後にバックアップを書き出した日時
 const LAST_BACKUP_KEY = 'lastBackupAt';
+// 消した記録のIDと消した日時（ほかの端末にも消したことを伝えるため。sync.js で使う）
+const DELETED_SPOTS_KEY = 'deletedSpots';
 
 function loadSpots() {
   const json = localStorage.getItem(SPOTS_KEY);
@@ -12,6 +14,16 @@ function loadSpots() {
 
 function saveSpots(spots) {
   localStorage.setItem(SPOTS_KEY, JSON.stringify(spots));
+}
+
+// { 記録のID: 消した日時 }
+function loadDeletedSpots() {
+  const json = localStorage.getItem(DELETED_SPOTS_KEY);
+  return json === null ? {} : JSON.parse(json);
+}
+
+function saveDeletedSpots(deletedSpots) {
+  localStorage.setItem(DELETED_SPOTS_KEY, JSON.stringify(deletedSpots));
 }
 
 function loadLastType() {

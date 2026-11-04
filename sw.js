@@ -1,6 +1,8 @@
 // 電波の弱い場所でもアプリを開けるよう、画面のファイルをキャッシュしておく Service Worker
 // 置くファイルを増やしたり減らしたりしたら、CACHE_NAME の番号を上げる（古いキャッシュが消える）
-const CACHE_NAME = 'sento-cafe-map-v1';
+const CACHE_NAME = 'sento-cafe-map-v2';
+// 同期に使う Firebase（バージョンは sync.js と同じ）
+const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/12.19.0';
 const APP_FILES = [
   './',
   'index.html',
@@ -9,12 +11,16 @@ const APP_FILES = [
   'storage.js',
   'image.js',
   'backup.js',
+  'sync.js',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  `${FIREBASE_SDK}/firebase-app.js`,
+  `${FIREBASE_SDK}/firebase-auth.js`,
+  `${FIREBASE_SDK}/firebase-firestore.js`,
 ];
 // ネットが遅いとき、キャッシュに切り替えるまで待つ時間（ミリ秒）
 const NETWORK_TIMEOUT = 3000;
@@ -63,10 +69,11 @@ self.addEventListener('fetch', (event) => {
   }
   const url = new URL(request.url);
   // 地図タイルはここでは扱わない（OSMの利用規約に合わせ、ブラウザの通常のキャッシュに任せる）
-  if (url.origin === self.location.origin) {
+  // /__/ はログインの画面など Firebase Hosting が用意するページなので、キャッシュしない
+  if (url.origin === self.location.origin && !url.pathname.startsWith('/__/')) {
     event.respondWith(networkFirst(request));
-  } else if (url.hostname === 'unpkg.com') {
-    // Leaflet はバージョンを固定しているので、キャッシュがあればそれを使う
+  } else if (url.hostname === 'unpkg.com' || url.href.startsWith(FIREBASE_SDK)) {
+    // Leaflet と Firebase はバージョンを固定しているので、キャッシュがあればそれを使う
     event.respondWith(caches.match(request).then((cached) => cached ?? fetch(request)));
   }
 });

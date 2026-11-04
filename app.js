@@ -174,10 +174,27 @@ function findSpot(id) {
   return spots.find((spot) => spot.id === id);
 }
 
+// 消した記録を、消した日時とともに残す（ログインしていないときに消した分も、あとで同期できるように）
+function recordDeletedSpots(previous, nextSpots) {
+  const nextIds = new Set(nextSpots.map((spot) => spot.id));
+  const removed = previous.filter((spot) => !nextIds.has(spot.id));
+  if (removed.length === 0) {
+    return;
+  }
+  const deletedSpots = loadDeletedSpots();
+  const now = formatLocalDateTime(new Date());
+  removed.forEach((spot) => {
+    deletedSpots[spot.id] = now;
+  });
+  saveDeletedSpots(deletedSpots);
+}
+
 // 保存できたときだけ、画面側のデータも差し替えて表示し直す
 function commitSpots(nextSpots) {
+  const previous = spots;
   try {
     saveSpots(nextSpots);
+    recordDeletedSpots(previous, nextSpots);
   } catch (error) {
     console.error(error);
     alert('保存できませんでした。もう一度お試しください');
@@ -187,7 +204,32 @@ function commitSpots(nextSpots) {
   renderMarkers();
   renderList();
   renderSettings();
+  // ログインしていれば、変わった記録をほかの端末へ送る（sync.js）
+  window.cloudSync?.pushChanges(previous, nextSpots);
   return true;
+}
+
+// ほかの端末で変わった記録を受け取ったとき（sync.js から呼ぶ）。送り返さないよう commitSpots は通さない
+function applySyncedSpots(nextSpots) {
+  saveSpots(nextSpots);
+  spots = nextSpots;
+  renderMarkers();
+  renderList();
+  renderSettings();
+
+  // 開いている画面の記録が、ほかの端末で消されたり変わったりしたとき
+  if (detailId !== null) {
+    const shown = findSpot(detailId);
+    if (shown) {
+      renderDetail(shown);
+    } else {
+      closeDetail();
+    }
+  }
+  if (editingId !== null && !findSpot(editingId)) {
+    closeSheet();
+    showToast('編集中の記録が、ほかの端末で削除されました');
+  }
 }
 
 function saveUpdatedSpot(updated) {

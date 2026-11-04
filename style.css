@@ -447,6 +447,13 @@ body.is-moving .tab-bar {
   line-height: 1.6;
 }
 
+.settings-status {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .settings-note {
   margin: 12px 0 0;
   color: #5f6670;
